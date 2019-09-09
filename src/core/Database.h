@@ -71,7 +71,7 @@ public:
               QString* error = nullptr,
               bool readOnly = false);
     bool save(QString* error = nullptr, bool atomic = true, bool backup = false);
-    bool save(const QString& filePath, QString* error = nullptr, bool atomic = true, bool backup = false);
+    bool saveAs(const QString& filePath, QString* error = nullptr, bool atomic = true, bool backup = false);
     bool extract(QByteArray&, QString* error = nullptr);
 
     bool isInitialized() const;
@@ -128,7 +128,6 @@ public:
     QByteArray transformedMasterKey() const;
 
     static Database* databaseByUuid(const QUuid& uuid);
-    static Database* databaseByFilePath(const QString& filePath);
 
 public slots:
     void markAsModified();
@@ -191,7 +190,6 @@ private:
 
     QUuid m_uuid;
     static QHash<QUuid, QPointer<Database>> s_uuidMap;
-    static QHash<QString, QPointer<Database>> s_filePathMap;
 };
 
 #endif // KEEPASSX_DATABASE_H
