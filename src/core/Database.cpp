@@ -19,6 +19,7 @@
 #include "Database.h"
 
 #include "core/Clock.h"
+#include "core/FileWatcher.h"
 #include "core/Group.h"
 #include "core/Merger.h"
 #include "core/Metadata.h"
@@ -41,6 +42,7 @@ Database::Database()
     , m_data()
     , m_rootGroup(nullptr)
     , m_timer(new QTimer(this))
+    , m_fileWatcher(new FileWatcher(this))
     , m_emitModified(false)
     , m_uuid(QUuid::createUuid())
 {
@@ -53,7 +55,9 @@ Database::Database()
 
     connect(m_metadata, SIGNAL(metadataModified()), this, SLOT(markAsModified()));
     connect(m_timer, SIGNAL(timeout()), SIGNAL(databaseModified()));
+    connect(this, SIGNAL(databaseOpened()), SLOT(updateCommonUsernames()));
     connect(this, SIGNAL(databaseSaved()), SLOT(updateCommonUsernames()));
+    connect(m_fileWatcher, SIGNAL(fileChanged()), SIGNAL(databaseFileChanged()));
 
     m_modified = false;
     m_emitModified = true;
@@ -115,6 +119,7 @@ bool Database::open(const QString& filePath, QSharedPointer<const CompositeKey> 
         emit databaseDiscarded();
     }
 
+    m_initialized = false;
     setEmitModified(false);
 
     QFile dbFile(filePath);
@@ -137,8 +142,7 @@ bool Database::open(const QString& filePath, QSharedPointer<const CompositeKey> 
     }
 
     KeePass2Reader reader;
-    bool ok = reader.readDatabase(&dbFile, std::move(key), this);
-    if (reader.hasError()) {
+    if (!reader.readDatabase(&dbFile, std::move(key), this)) {
         if (error) {
             *error = tr("Error while reading the database: %1").arg(reader.errorString());
         }
@@ -149,22 +153,23 @@ bool Database::open(const QString& filePath, QSharedPointer<const CompositeKey> 
     setFilePath(filePath);
     dbFile.close();
 
-    updateCommonUsernames();
-
-    setInitialized(ok);
     markAsClean();
 
+    m_initialized = true;
+    emit databaseOpened();
+    m_fileWatcher->start(canonicalFilePath());
     setEmitModified(true);
-    return ok;
+
+    return true;
 }
 
 /**
  * Save the database to the current file path. It is an error to call this function
  * if no file path has been defined.
  *
+ * @param error error message in case of failure
  * @param atomic Use atomic file transactions
  * @param backup Backup the existing database file, if exists
- * @param error error message in case of failure
  * @return true on success
  */
 bool Database::save(QString* error, bool atomic, bool backup)
@@ -193,27 +198,52 @@ bool Database::save(QString* error, bool atomic, bool backup)
  * wrong moment.
  *
  * @param filePath Absolute path of the file to save
+ * @param error error message in case of failure
  * @param atomic Use atomic file transactions
  * @param backup Backup the existing database file, if exists
- * @param error error message in case of failure
  * @return true on success
  */
 bool Database::saveAs(const QString& filePath, QString* error, bool atomic, bool backup)
 {
-    // Disallow saving to the same file if read-only
-    if (m_data.isReadOnly && filePath == m_data.filePath) {
-        Q_ASSERT_X(false, "Database::saveAs", "Could not save, database file is read-only.");
-        if (error) {
-            *error = tr("Could not save, database file is read-only.");
+    if (filePath == m_data.filePath) {
+        // Disallow saving to the same file if read-only
+        if (m_data.isReadOnly) {
+            Q_ASSERT_X(false, "Database::saveAs", "Could not save, database file is read-only.");
+            if (error) {
+                *error = tr("Could not save, database file is read-only.");
+            }
+            return false;
         }
-        return false;
+
+        // Fail-safe check to make sure we don't overwrite underlying file changes
+        // that have not yet triggered a file reload/merge operation.
+        if (!m_fileWatcher->hasSameFileChecksum()) {
+            if (error) {
+                *error = tr("Database file has unmerged changes.");
+            }
+            return false;
+        }
     }
 
     // Clear read-only flag
     setReadOnly(false);
+    m_fileWatcher->stop();
 
     auto& canonicalFilePath = QFileInfo::exists(filePath) ? QFileInfo(filePath).canonicalFilePath() : filePath;
+    bool ok = performSave(canonicalFilePath, error, atomic, backup);
+    if (ok) {
+        setFilePath(filePath);
+    } else {
+        // Saving failed
+        markAsModified();
+    }
 
+    m_fileWatcher->start(canonicalFilePath);
+    return ok;
+}
+
+bool Database::performSave(const QString& filePath, QString* error, bool atomic, bool backup)
+{
     if (atomic) {
         QSaveFile saveFile(filePath);
         if (saveFile.open(QIODevice::WriteOnly)) {
@@ -223,12 +253,11 @@ bool Database::saveAs(const QString& filePath, QString* error, bool atomic, bool
             }
 
             if (backup) {
-                backupDatabase(canonicalFilePath);
+                backupDatabase(filePath);
             }
 
             if (saveFile.commit()) {
                 // successfully saved database file
-                setFilePath(filePath);
                 return true;
             }
         }
@@ -247,28 +276,26 @@ bool Database::saveAs(const QString& filePath, QString* error, bool atomic, bool
             tempFile.close(); // flush to disk
 
             if (backup) {
-                backupDatabase(canonicalFilePath);
+                backupDatabase(filePath);
             }
 
             // Delete the original db and move the temp file in place
-            QFile::remove(canonicalFilePath);
+            QFile::remove(filePath);
 
             // Note: call into the QFile rename instead of QTemporaryFile
             // due to an undocumented difference in how the function handles
             // errors. This prevents errors when saving across file systems.
-            if (tempFile.QFile::rename(canonicalFilePath)) {
+            if (tempFile.QFile::rename(filePath)) {
                 // successfully saved the database
                 tempFile.setAutoRemove(false);
-                setFilePath(filePath);
                 return true;
-            } else if (!backup || !restoreDatabase(canonicalFilePath)) {
+            } else if (!backup || !restoreDatabase(filePath)) {
                 // Failed to copy new database in place, and
                 // failed to restore from backup or backups disabled
                 tempFile.setAutoRemove(false);
                 if (error) {
                     *error = tr("%1\nBackup database located at %2").arg(tempFile.errorString(), tempFile.fileName());
                 }
-                markAsModified();
                 return false;
             }
         }
@@ -279,7 +306,6 @@ bool Database::saveAs(const QString& filePath, QString* error, bool atomic, bool
     }
 
     // Saving failed
-    markAsModified();
     return false;
 }
 
@@ -471,6 +497,8 @@ void Database::setFilePath(const QString& filePath)
     if (filePath != m_data.filePath) {
         QString oldPath = m_data.filePath;
         m_data.filePath = filePath;
+        // Don't watch for changes until the next open or save operation
+        m_fileWatcher->stop();
         emit filePathChanged(oldPath, filePath);
     }
 }
