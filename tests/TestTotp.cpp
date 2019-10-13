@@ -51,7 +51,7 @@ void TestTotp::testParseSecret()
     settings = Totp::parseSettings(secret);
     QVERIFY(!settings.isNull());
     QCOMPARE(settings->key, QString("HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ"));
-    QCOMPARE(settings->custom, false);
+    QCOMPARE(settings->custom, true);
     QCOMPARE(settings->format, Totp::StorageFormat::OTPURL);
     QCOMPARE(settings->digits, 6u);
     QCOMPARE(settings->step, 30u);
