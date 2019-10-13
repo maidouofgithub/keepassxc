@@ -378,8 +378,8 @@ QJsonArray BrowserService::findMatchingEntries(const QString& id,
     QList<Entry*> pwEntriesToConfirm;
     QList<Entry*> pwEntries;
     for (Entry* entry : searchEntries(url, keyList)) {
-        if (entry->customData()->contains(BrowserService::OPTION_HIDE_ENTRY) &&
-            entry->customData()->value(BrowserService::OPTION_HIDE_ENTRY) == "true") {
+        if (entry->customData()->contains(BrowserService::OPTION_HIDE_ENTRY)
+            && entry->customData()->value(BrowserService::OPTION_HIDE_ENTRY) == "true") {
             continue;
         }
 
@@ -616,8 +616,7 @@ QList<Entry*> BrowserService::searchEntries(const QString& url, const StringPair
     // Check if database is connected with KeePassXC-Browser
     auto databaseConnected = [&](const QSharedPointer<Database>& db) {
         for (const StringPair& keyPair : keyList) {
-            QString key =
-                db->metadata()->customData()->value(QLatin1String(ASSOCIATE_KEY_PREFIX) + keyPair.first);
+            QString key = db->metadata()->customData()->value(QLatin1String(ASSOCIATE_KEY_PREFIX) + keyPair.first);
             if (!key.isEmpty() && keyPair.second == key) {
                 return true;
             }
