@@ -144,6 +144,13 @@ static const NSEventMask NSEventMaskKeyDown = NSKeyDownMask;
 //
 - (bool) enableAccessibility
 {
+    CGImageRef screenshot = CGWindowListCreateImage(
+            CGRectMake(0, 0, 1, 1),
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
+            kCGWindowImageDefault);
+    CFRelease(screenshot);
+
     NSDictionary* opts = @{static_cast<id>(kAXTrustedCheckOptionPrompt): @YES};
     return AXIsProcessTrustedWithOptions(static_cast<CFDictionaryRef>(opts));
 }
