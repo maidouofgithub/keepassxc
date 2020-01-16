@@ -53,12 +53,6 @@ BrowserOptionDialog::BrowserOptionDialog(QWidget* parent)
 
     m_ui->scriptWarningWidget->setVisible(false);
     m_ui->scriptWarningWidget->setAutoHideTimeout(-1);
-    m_ui->scriptWarningWidget->showMessage(
-        tr("<b>Warning</b>, the keepassxc-proxy application was not found!"
-           "<br />Please check the KeePassXC installation directory or confirm the custom path in advanced options."
-           "<br />Browser integration WILL NOT WORK without the proxy application."
-           "<br />Expected Path: "),
-        MessageWidget::Warning);
 
     m_ui->warningWidget->showMessage(tr("<b>Warning:</b> The following options can be dangerous!"),
                                      MessageWidget::Warning);
@@ -73,6 +67,10 @@ BrowserOptionDialog::BrowserOptionDialog(QWidget* parent)
     connect(m_ui->useCustomProxy, SIGNAL(toggled(bool)), m_ui->customProxyLocation, SLOT(setEnabled(bool)));
     connect(m_ui->useCustomProxy, SIGNAL(toggled(bool)), m_ui->customProxyLocationBrowseButton, SLOT(setEnabled(bool)));
     connect(m_ui->customProxyLocationBrowseButton, SIGNAL(clicked()), this, SLOT(showProxyLocationFileDialog()));
+
+#ifndef Q_OS_LINUX
+    m_ui->snapWarningLabel->setVisible(false);
+#endif
 
 #ifdef Q_OS_WIN
     // Brave uses Chrome's registry settings
@@ -130,6 +128,9 @@ void BrowserOptionDialog::loadSettings()
     m_ui->vivaldiSupport->setChecked(settings->vivaldiSupport());
     m_ui->torBrowserSupport->setChecked(settings->torBrowserSupport());
 #endif
+#ifndef Q_OS_LINUX
+    m_ui->snapWarningLabel->setVisible(false);
+#endif
 
 #if defined(KEEPASSXC_DIST_APPIMAGE)
     m_ui->supportBrowserProxy->setChecked(true);
@@ -154,9 +155,13 @@ void BrowserOptionDialog::loadSettings()
     // Check for native messaging host location errors
     QString path;
     if (!settings->checkIfProxyExists(path)) {
-        QString text = m_ui->scriptWarningWidget->text();
-        text.append(path);
-        m_ui->scriptWarningWidget->setText(text);
+        auto text =
+            tr("<b>Warning</b>, the keepassxc-proxy application was not found!"
+               "<br />Please check the KeePassXC installation directory or confirm the custom path in advanced options."
+               "<br />Browser integration WILL NOT WORK without the proxy application."
+               "<br />Expected Path: %1")
+                .arg(path);
+        m_ui->scriptWarningWidget->showMessage(text, MessageWidget::Warning);
         m_ui->scriptWarningWidget->setVisible(true);
     } else {
         m_ui->scriptWarningWidget->setVisible(false);
